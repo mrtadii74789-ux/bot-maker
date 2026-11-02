@@ -12,6 +12,5 @@ export const templateKeyboard = new InlineKeyboard()
 
 export const adminKeyboard = new InlineKeyboard()
   .text('📊 الإحصائيات', 'admin:stats').text('🤖 البوتات', 'admin:bots').row()
-  .text('📢 الإذاعة العامة', 'admin:broadcast').text('🔒 الاشتراك الإجباري', 'admin:subscription').row()
-  .text('➕ إضافة اشتراك', 'admin:addchat').text('🧩 إدارة القوالب', 'admin:templates').row()
-  .text('⚙️ الإعدادات', 'admin:settings');
+  .text('📢 الإذاعة', 'admin:broadcast').text('🔒 الاشتراك', 'admin:subscription').row()
+  .text('➕ إضافة اشتراك', 'admin:addchat').text('⚙️ الإعدادات', 'admin:settings');
