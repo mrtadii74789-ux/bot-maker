@@ -58,10 +58,10 @@ export function registerOwnerHandlers(bot,db,ownerId) {
     await ctx.reply('أرسل: chat_id | الاسم | رابط_الدعوة');
   });
 
-  bot.on('message:text',async ctx=>{
-    if(ctx.from.id!==ownerId) return;
+  bot.on('message:text',async (ctx,next)=>{
+    if(ctx.from.id!==ownerId) return next();
     const state=ownerState.get(ownerId);
-    if(!state) return;
+    if(!state) return next();
 
     if(state.step==='chat') {
       const p=ctx.message.text.split('|').map(x=>x.trim());
