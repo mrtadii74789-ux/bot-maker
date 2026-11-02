@@ -4,6 +4,16 @@ import { mainKeyboard, templateKeyboard } from '../keyboards.js';
 const pending = new Map();
 
 export function registerUserHandlers(bot,db) {
+  bot.on('message:text', async (ctx, next) => {
+    const text = ctx.message.text.trim();
+    if (/^\/start(?:@\w+)?(?:\s|$)/i.test(text)) {
+      console.log(`Start command from user ${ctx.from.id} (@${ctx.from.username || '-'})`);
+      await ctx.reply('🤖 أهلاً بك في منصة صانع البوتات!\\n\\nاختر من القائمة:', { reply_markup: mainKeyboard });
+      return;
+    }
+    await next();
+  });
+
   bot.command('start',ctx=>ctx.reply('🤖 أهلاً بك في منصة صانع البوتات!\\n\\nاختر من القائمة:',{reply_markup:mainKeyboard}));
 
   bot.hears('🤖 إنشاء بوت',async ctx=>{
