@@ -60,7 +60,7 @@ async function groupsTemplate(bot, ctx, record, db) {
     if (!member || !['administrator','creator'].includes(member.status)) return ctx.reply('❌ هذا الأمر للمشرفين فقط.');
     return ctx.reply(text === '/lock' ? '🔒 تم تفعيل وضع القفل (واجهة القفل جاهزة للتوسعة).' : '🔓 تم إلغاء وضع القفل.');
   }
-  if (/https?:\\/\\/|t\\.me\\//i.test(text)) {
+  if (/https?:\/\/|t\.me\//i.test(text)) {
     try {
       const member = await bot.api.getChatMember(ctx.chat.id, ctx.from.id);
       if (!['administrator','creator'].includes(member.status)) {
@@ -71,7 +71,7 @@ async function groupsTemplate(bot, ctx, record, db) {
   }
   const commands = db.listCommands(record.id);
   for (const c of commands) {
-    if (text === c.command || text === `/${c.command.replace(/^\\//,'')}`) return ctx.reply(c.response);
+    if (text === c.command || text === `/${c.command.replace(/^\//,'')}`) return ctx.reply(c.response);
   }
 }
 
