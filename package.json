@@ -1,0 +1,15 @@
+{
+  "name": "bot-maker-platform",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/index.js",
+    "check": "node --check src/index.js && node --check src/database.js && node --check src/bot-manager.js && node --check src/handlers/user.js && node --check src/handlers/owner.js",
+    "test": "node test/smoke.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "grammy": "^1.38.4"
+  }
+}
