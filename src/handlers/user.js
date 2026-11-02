@@ -1,6 +1,6 @@
 import { verifyBotToken, startManagedBot, setManagedBotProfile, getRuntimeBots } from '../bot-manager.js';
-import { InlineKeyboard } from 'grammy';
-import { mainKeyboard, templateKeyboard } from '../keyboards.js';
+import { InlineKeyboard, Keyboard } from 'grammy';
+import { mainKeyboard, templateKeyboard, adminKeyboard } from '../keyboards.js';
 
 const pending = new Map();
 const ownerBotState = new Map();
@@ -17,7 +17,17 @@ function creationGuide(template) {
 }
 
 export function registerUserHandlers(bot,db) {
-  bot.command('start', async ctx => ctx.reply(startText(),{parse_mode:'Markdown',reply_markup:mainKeyboard}));
+  bot.command('start', async ctx => {
+    const kb = ctx.from.id === Number(process.env.OWNER_ID)
+      ? new Keyboard().text('🤖 إنشاء بوت').text('🤖 بوتاتي').row().text('📊 إحصائياتي').text('⚙️ إدارة بوتاتي').row().text('👑 لوحة المالك').row().text('ℹ️ المساعدة').resized()
+      : mainKeyboard;
+    await ctx.reply(startText(),{parse_mode:'Markdown',reply_markup:kb});
+  });
+
+  bot.hears('👑 لوحة المالك', async ctx => {
+    if (ctx.from.id !== Number(process.env.OWNER_ID)) return;
+    await ctx.reply('👑 **لوحة تحكم منصة صانع البوتات**\n\nاختر العملية التي تريد تنفيذها:', {parse_mode:'Markdown', reply_markup:adminKeyboard});
+  });
 
   bot.hears('🤖 إنشاء بوت',async ctx=>{
     pending.set(ctx.from.id,{step:'template'});
@@ -31,34 +41,50 @@ export function registerUserHandlers(bot,db) {
     await ctx.reply(creationGuide(template),{parse_mode:'Markdown'});
   });
 
-  bot.on('message:text',async ctx=>{
-    const p=pending.get(ctx.from.id);
-    if(!p || p.step!=='name') return;
-    const name=ctx.message.text.trim();
-    if(name.length<2 || name.length>64) return ctx.reply('❌ اسم البوت يجب أن يكون بين حرفين و64 حرفًا. أرسل الاسم مرة أخرى.');
-    pending.set(ctx.from.id,{step:'token',template:p.template,name});
-    await ctx.reply(`✅ تم حفظ اسم البوت: **${name.replace(/([_*\[\]`])/g,'\\$1')}**\n\nالخطوة الأخيرة: أرسل الآن **Token** الذي حصلت عليه من BotFather.`,{parse_mode:'Markdown'});
-  });
+  bot.on('message:text', async ctx => {
+    const p = pending.get(ctx.from.id);
+    if (!p) return;
 
-  bot.on('message:text',async ctx=>{
-    const p=pending.get(ctx.from.id);
-    if(!p || p.step!=='token') return;
-    const token=ctx.message.text.trim();
-    if (token.startsWith('/start')) return;
-    try {
-      await ctx.reply('⏳ **جاري التحقق من Token وإنشاء البوت...**\n\nقد تستغرق العملية بضع ثوانٍ.',{parse_mode:'Markdown'});
-      const me=await verifyBotToken(token);
-      const id=db.addBot({ownerUserId:ctx.from.id,token,botId:me.id,username:me.username,firstName:me.first_name,template:p.template});
-      const record=db.getBot(id);
-      await startManagedBot(record,db);
-      try { await setManagedBotProfile(record, p.name); } catch (profileError) { console.error(`Profile setup failed for bot #${id}:`, profileError?.message || profileError); }
-      db.setBotSetting(id,'display_name',p.name);
-      pending.delete(ctx.from.id);
-      await ctx.reply(`🎉 **تم إنشاء بوتك بنجاح**\n\n🤖 البوت: @${me.username}\n🧩 القالب: ${templateNames[p.template]}\n🟢 الحالة: يعمل الآن\n\nهذا البوت أصبح خاصًا بك، وسيتم توجيه مستخدميه إليك أنت فقط وفقًا لوظيفة القالب.`,{parse_mode:'Markdown',reply_markup:mainKeyboard});
-    } catch(e) {
-      await ctx.reply(`❌ **تعذر إنشاء البوت**\n\nالسبب: ${e?.description||e?.message||'Token غير صالح'}\n\nتأكد من نسخ Token كاملًا من BotFather ثم أرسله مرة أخرى.`,{parse_mode:'Markdown'});
+    const text = ctx.message.text.trim();
+
+    if (p.step === 'name') {
+      if (text.length < 2 || text.length > 64) {
+        return ctx.reply('❌ اسم البوت غير مناسب. أرسله بين حرفين و64 حرفًا.');
+      }
+      pending.set(ctx.from.id, { ...p, step: 'token', name: text });
+      const kb = new InlineKeyboard().url('🤖 فتح BotFather', botFather);
+      return ctx.reply(
+        `✅ **تم حفظ اسم البوت**\n\n🤖 الاسم: ${text.replace(/([_\\*\\[\]`])/g,'\\$1')}\n\nالخطوة الأخيرة هي ربط البوت الذي أنشأته في BotFather.\n\n🔐 أرسل الآن **Token** الذي أعطاك إياه BotFather.\n\n⚠️ لا ترسل Token بوت المنصة، ولا تنشر Token الخاص ببوتك في أي مكان.`,
+        { parse_mode:'Markdown', reply_markup:kb }
+      );
+    }
+
+    if (p.step === 'token') {
+      const token = text;
+      if (!/^\d+:[A-Za-z0-9_-]{20,}$/.test(token)) {
+        return ctx.reply('❌ صيغة الـToken تبدو غير صحيحة. انسخه كاملًا من BotFather وأرسله مرة أخرى.');
+      }
+      try {
+        await ctx.reply('⏳ **جاري التحقق من Token...**\n\nسأتحقق من البوت ثم أشغّله تلقائيًا. لا ترسل الرسالة مرة أخرى أثناء التحقق.', {parse_mode:'Markdown'});
+        const me = await verifyBotToken(token);
+        const existing = db.findBotByTelegramId?.(me.id);
+        if (existing) return ctx.reply(`⚠️ هذا البوت مرتبط مسبقًا بالمنصة كـ @${existing.username || me.username}.`);
+        const id = db.addBot({ownerUserId:ctx.from.id,token,botId:me.id,username:me.username,firstName:me.first_name,template:p.template});
+        const record = db.getBot(id);
+        await startManagedBot(record,db);
+        try { await setManagedBotProfile(record,p.name); } catch (e) { console.error(`Profile setup failed for bot #${id}:`,e?.message||e); }
+        db.setBotSetting(id,'display_name',p.name);
+        pending.delete(ctx.from.id);
+        const kb = new InlineKeyboard().url('🤖 فتح البوت', `https://t.me/${me.username}`).row().text('⚙️ إدارة بوتاتي','noop');
+        return ctx.reply(`🎉 **تم إنشاء البوت بنجاح**\n\n🤖 البوت: @${me.username}\n📝 الاسم: ${p.name}\n🧩 النوع: ${templateNames[p.template]}\n🟢 الحالة: يعمل الآن\n\nهذا البوت مستقل عن بقية البوتات، ومستخدموه ورسائلهم مرتبطة بصاحب هذا البوت فقط.`, {parse_mode:'Markdown',reply_markup:kb});
+      } catch (e) {
+        console.error('Create bot failed:',e);
+        return ctx.reply(`❌ **تعذر إنشاء البوت**\n\n${e?.description || e?.message || 'تعذر التحقق من Token'}\n\nتأكد من أن Token كامل وصحيح ثم أرسله مرة أخرى.` , {parse_mode:'Markdown'});
+      }
     }
   });
+
+  bot.callbackQuery('noop', ctx => ctx.answerCallbackQuery());
 
   bot.hears('🤖 بوتاتي',async ctx=>{
     const bots=db.listOwnerBots(ctx.from.id);
@@ -83,65 +109,8 @@ export function registerUserHandlers(bot,db) {
     const kb = new InlineKeyboard()
       .text('📊 إحصائيات البوت',`ownerbot:stats:${id}`).row()
       .text('📢 إذاعة لمستخدمي البوت',`ownerbot:announce:${id}`).row()
-      .text('✏️ رسالة الترحيب',`ownerbot:welcome:${id}`).row();
-    if (b.template === 'groups') {
-      kb.text('🌹 ترحيب المجموعة',`ownerbot:groupwelcome:${id}`).row()
-        .text('📜 القوانين',`ownerbot:rules:${id}`).row()
-        .text('➕ أمر مخصص',`ownerbot:addcmd:${id}`).text('🗑️ حذف أمر',`ownerbot:delcmd:${id}`).row();
-    }
-    if (b.template === 'contact') kb.text('📩 آخر رسائل التواصل',`ownerbot:contacts:${id}`).row()
-      .text('✏️ نص الاستقبال',`ownerbot:contactintro:${id}`).row();
+      .text('✏️ رسالة الترحيب',`ownerbot:welcome:${id}`);
     await ctx.reply(`⚙️ **إدارة @${b.username||'-'}**\n\n🧩 القالب: ${templateNames[b.template]}\n🟢 الحالة: ${b.status}\n👥 المستخدمون: ${db.botUserCount(id)}\n📩 الرسائل: ${db.contactCount(id)}`,{parse_mode:'Markdown',reply_markup:kb});
-  });
-
-
-  bot.callbackQuery(/^ownerbot:groupwelcome:(\d+)$/,async ctx=>{
-    const id=Number(ctx.match[1]), b=db.getBot(id);
-    if(!b || b.owner_user_id!==ctx.from.id || b.template!=='groups') return ctx.answerCallbackQuery({text:'غير مسموح',show_alert:true});
-    ownerBotState.set(ctx.from.id,{botId:id,step:'group_welcome'});
-    await ctx.answerCallbackQuery();
-    await ctx.reply('🌹 **ترحيب المجموعة**\n\nأرسل رسالة الترحيب الجديدة. يمكنك استخدام `{name}` لاسم العضو و`{username}` للمعرف.');
-  });
-
-  bot.callbackQuery(/^ownerbot:rules:(\d+)$/,async ctx=>{
-    const id=Number(ctx.match[1]), b=db.getBot(id);
-    if(!b || b.owner_user_id!==ctx.from.id || b.template!=='groups') return ctx.answerCallbackQuery({text:'غير مسموح',show_alert:true});
-    ownerBotState.set(ctx.from.id,{botId:id,step:'rules'});
-    await ctx.answerCallbackQuery();
-    await ctx.reply('📜 أرسل الآن نص قوانين المجموعة.');
-  });
-
-  bot.callbackQuery(/^ownerbot:addcmd:(\d+)$/,async ctx=>{
-    const id=Number(ctx.match[1]), b=db.getBot(id);
-    if(!b || b.owner_user_id!==ctx.from.id || b.template!=='groups') return ctx.answerCallbackQuery({text:'غير مسموح',show_alert:true});
-    ownerBotState.set(ctx.from.id,{botId:id,step:'addcmd'});
-    await ctx.answerCallbackQuery();
-    await ctx.reply('➕ أرسل الأمر والرد بهذا الشكل:\n`امر | الرد`\n\nمثال: `اهلا | هلا وغلا نورت المجموعة 🌹`');
-  });
-
-  bot.callbackQuery(/^ownerbot:delcmd:(\d+)$/,async ctx=>{
-    const id=Number(ctx.match[1]), b=db.getBot(id);
-    if(!b || b.owner_user_id!==ctx.from.id || b.template!=='groups') return ctx.answerCallbackQuery({text:'غير مسموح',show_alert:true});
-    ownerBotState.set(ctx.from.id,{botId:id,step:'delcmd'});
-    await ctx.answerCallbackQuery();
-    const cmds=db.listCommands(id);
-    await ctx.reply(cmds.length?`🗑️ أرسل اسم الأمر المراد حذفه.\n\nالموجود حاليًا: ${cmds.map(c=>c.command).join(', ')}`:'📭 لا توجد أوامر مخصصة.');
-  });
-
-  bot.callbackQuery(/^ownerbot:contacts:(\d+)$/,async ctx=>{
-    const id=Number(ctx.match[1]), b=db.getBot(id);
-    if(!b || b.owner_user_id!==ctx.from.id || b.template!=='contact') return ctx.answerCallbackQuery({text:'غير مسموح',show_alert:true});
-    await ctx.answerCallbackQuery();
-    await ctx.reply(`📩 **رسائل التواصل**\n\nإجمالي الرسائل المسجلة: ${db.contactCount(id)}\n\nالمحادثات تصل إليك مباشرة مع زر «↩️ رد على المستخدم».`);
-  });
-
-  bot.callbackQuery(/^ownerbot:contactintro:(\d+)$/,async ctx=>{
-    const id=Number(ctx.match[1]), b=db.getBot(id);
-    if(!b || b.owner_user_id!==ctx.from.id || b.template!=='contact') return ctx.answerCallbackQuery({text:'غير مسموح',show_alert:true});
-    ownerBotState.set(ctx.from.id,{botId:id,step:'contact_intro'});
-    await ctx.answerCallbackQuery();
-    const current=db.getBotSetting(id,'contact_intro') || '📩 أرسل رسالتك، وسيتم الرد عليك بأقرب وقت ممكن.';
-    await ctx.reply(`✏️ **نص الاستقبال**\n\nهذا النص سيظهر للمستخدم عندما يضغط /start في بوت التواصل الخاص بك.\n\nالنص الحالي:\n${current}\n\nأرسل الآن النص الجديد. يمكنك كتابة أي عبارة ترحيبية أو تعليمات تريدها.`);
   });
 
   bot.callbackQuery(/^ownerbot:stats:(\d+)$/,async ctx=>{
@@ -185,36 +154,6 @@ export function registerUserHandlers(bot,db) {
       db.setBotSetting(st.botId,'welcome',ctx.message.text);
       ownerBotState.delete(ctx.from.id);
       return ctx.reply('✅ تم تحديث رسالة الترحيب الخاصة بهذا البوت.');
-    }
-    if(st.step==='group_welcome') {
-      db.setBotSetting(st.botId,'group_welcome',ctx.message.text);
-      ownerBotState.delete(ctx.from.id);
-      return ctx.reply('✅ تم تحديث ترحيب المجموعة.');
-    }
-    if(st.step==='rules') {
-      db.setBotSetting(st.botId,'rules',ctx.message.text);
-      ownerBotState.delete(ctx.from.id);
-      return ctx.reply('✅ تم تحديث قوانين المجموعة.');
-    }
-    if(st.step==='contact_intro') {
-      if(!ctx.message.text.trim()) return ctx.reply('❌ أرسل نصًا غير فارغ.');
-      db.setBotSetting(st.botId,'contact_intro',ctx.message.text.trim());
-      ownerBotState.delete(ctx.from.id);
-      return ctx.reply('✅ تم حفظ نص الاستقبال. سيظهر الآن للمستخدمين عند دخول بوت التواصل.');
-    }
-    if(st.step==='addcmd') {
-      const parts=ctx.message.text.split('|');
-      if(parts.length<2) return ctx.reply('❌ الصيغة: `امر | الرد`');
-      const command=parts.shift().trim().replace(/^\//,'');
-      const response=parts.join('|').trim();
-      if(!command || !response) return ctx.reply('❌ الصيغة غير صحيحة: `امر | الرد`');
-      db.setCommand(st.botId,command,response); ownerBotState.delete(ctx.from.id);
-      return ctx.reply(`✅ تم حفظ الأمر \`${command}\`.`);
-    }
-    if(st.step==='delcmd') {
-      const command=ctx.message.text.trim().replace(/^\//,'');
-      db.deleteCommand(st.botId,command); ownerBotState.delete(ctx.from.id);
-      return ctx.reply(`✅ تم حذف الأمر \`${command}\` إن كان موجودًا.`);
     }
     ownerBotState.delete(ctx.from.id);
     if(!runtime) return ctx.reply('❌ البوت غير محمل حاليًا.');
