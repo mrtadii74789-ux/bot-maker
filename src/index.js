@@ -22,6 +22,7 @@ bot.use(async(ctx,next)=>{
 
 bot.use(async(ctx,next)=>{
   console.log(`Update received: ${ctx.update.update_id}`);
+  if (ctx.message?.text) console.log(`Message text: ${JSON.stringify(ctx.message.text)} from ${ctx.from?.id ?? '-'}`);
   await next();
 });
 
