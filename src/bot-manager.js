@@ -1,7 +1,9 @@
-import { Bot, GrammyError, InlineKeyboard } from 'grammy';
+import { Bot, GrammyError, InlineKeyboard, InputFile } from 'grammy';
+import QRCode from 'qrcode';
 
 const runtimes = new Map();
 const replyStates = new Map();
+const qrStates = new Map();
 
 export async function verifyBotToken(token) {
   const b = new Bot(token);
@@ -16,7 +18,60 @@ function decorated(text) {
 }
 
 function templateLabel(t) {
-  return t === 'groups' ? '🛡️ إدارة المجموعات' : t === 'contact' ? '📩 بوت تواصل' : '✨ بوت زخرفة';
+  return t === 'groups' ? '🛡️ إدارة المجموعات' : t === 'contact' ? '📩 بوت تواصل' : t === 'decor' ? '✨ بوت زخرفة' : '🔳 بوت QR';
+}
+
+const QR_TYPES = {
+  text: '📝 نص', url: '🔗 رابط', phone: '📞 رقم هاتف', email: '📧 إيميل', wifi: '📶 Wi‑Fi',
+  contact: '👤 جهة اتصال', sms: '💬 رسالة SMS', location: '📍 موقع', whatsapp: '🟢 واتساب', image: '🖼️ رابط صورة'
+};
+
+function escapeWifi(value = '') {
+  return value.replace(/[\\;,:"]/g, '\\$&');
+}
+
+function makeQrPayload(type, text) {
+  const v = text.trim();
+  if (!v) throw new Error('أرسل البيانات أولًا.');
+  if (type === 'text') return v;
+  if (type === 'url') return /^https?:\/\//i.test(v) ? v : `https://${v}`;
+  if (type === 'phone') return `tel:${v.replace(/[^+0-9]/g, '')}`;
+  if (type === 'email') return `mailto:${v}`;
+  if (type === 'wifi') {
+    const parts = v.split('|');
+    if (parts.length < 2) throw new Error('اكتب: اسم الشبكة|كلمة المرور|WPA');
+    return `WIFI:T:${parts[2] || 'WPA'};S:${escapeWifi(parts[0])};P:${escapeWifi(parts[1])};;`;
+  }
+  if (type === 'contact') {
+    const parts = v.split('|');
+    return `BEGIN:VCARD\nVERSION:3.0\nFN:${parts[0] || ''}\nTEL:${parts[1] || ''}\nEMAIL:${parts[2] || ''}\nEND:VCARD`;
+  }
+  if (type === 'sms') {
+    const parts = v.split('|');
+    if (!parts[0]) throw new Error('اكتب: الرقم|نص الرسالة');
+    return `SMSTO:${parts[0]}:${parts.slice(1).join('|')}`;
+  }
+  if (type === 'location') {
+    const parts = v.split(',');
+    if (parts.length < 2) throw new Error('اكتب: latitude,longitude');
+    return `geo:${parts[0].trim()},${parts[1].trim()}`;
+  }
+  if (type === 'whatsapp') {
+    const phone = v.replace(/[^0-9]/g, '');
+    if (!phone) throw new Error('أرسل رقم واتساب مع رمز الدولة.');
+    return `https://wa.me/${phone}`;
+  }
+  if (type === 'image') {
+    if (!/^https?:\/\//i.test(v)) throw new Error('أرسل رابط الصورة المباشر.');
+    return v;
+  }
+  return v;
+}
+
+async function sendQr(ctx, type, raw) {
+  const payload = makeQrPayload(type, raw);
+  const buffer = await QRCode.toBuffer(payload, { errorCorrectionLevel: 'M', width: 900, margin: 2 });
+  return ctx.replyWithPhoto(new InputFile(buffer, 'qr.png'), { caption: `✅ تم إنشاء رمز QR\n\n${QR_TYPES[type] || 'QR'}` });
 }
 
 function userLabel(user) {
@@ -130,8 +185,9 @@ function welcomeText(record, db) {
   const custom = db.getBotSetting(record.id,'welcome');
   if (custom) return custom;
   if (record.template === 'contact') return `📩 **مرحبًا بك في بوت التواصل**\n\nأرسل رسالتك هنا، وستصل مباشرة إلى صاحب البوت.\n\n✉️ يمكنك إرسال نص أو صورة أو ملف أو صوت.\n\nنحن نحافظ على بياناتك ولا نشاركها خارج صاحب البوت.`;
-  if (record.template === 'decor') return '✨ **مرحبًا بك في بوت الزخرفة**\n\nأرسل أي نص وسأعرض لك عدة زخارف جاهزة.';
-  return '🛡️ **مرحبًا بك في بوت إدارة المجموعات**\n\nأضفني إلى مجموعتك وارفعني مشرفًا للبدء.';
+  if (record.template === 'decor') return '✨ **بوت الزخرفة**\n\nأرسل اسمًا أو كلمة وسأعرض لك زخارف جاهزة.';
+  if (record.template === 'qr') return '🔳 **بوت QR**\n\nحوّل النصوص والروابط والأرقام وWi‑Fi والإيميل وجهة الاتصال وSMS والموقع وواتساب ورابط الصورة إلى QR.\n\nاستخدم /qr للبدء.';
+  return '🛡️ **بوت إدارة المجموعات**\n\nأضفني إلى مجموعتك وارفعني مشرفًا للبدء.';
 }
 
 export function createManagedBot(record, db) {
@@ -153,6 +209,25 @@ export function createManagedBot(record, db) {
     await ctx.answerCallbackQuery();
     if (await requiredCheck(bot,ctx,db)) await ctx.reply('✅ تم التحقق من اشتراكك. يمكنك الآن استخدام البوت.');
   });
+
+  if (record.template === 'qr') {
+    bot.command('qr', async ctx => {
+      const { qrKeyboard } = await import('./keyboards.js');
+      await ctx.reply('🔳 **بوت QR**\n\nاختر ما تريد تحويله إلى صورة QR:', { parse_mode: 'Markdown', reply_markup: qrKeyboard });
+    });
+    bot.callbackQuery(/^qr:(text|url|phone|email|wifi|contact|sms|location|whatsapp|image)$/, async ctx => {
+      const type = ctx.match[1];
+      qrStates.set(`${record.id}:${ctx.from.id}`, type);
+      await ctx.answerCallbackQuery();
+      const examples = {
+        text: 'أرسل النص.', url: 'أرسل الرابط.', phone: 'أرسل رقم الهاتف.', email: 'أرسل الإيميل.',
+        wifi: 'اكتب: اسم الشبكة|كلمة المرور|WPA', contact: 'اكتب: الاسم|رقم الهاتف|الإيميل',
+        sms: 'اكتب: الرقم|نص الرسالة', location: 'اكتب: latitude,longitude',
+        whatsapp: 'أرسل رقم الواتساب مع رمز الدولة.', image: 'أرسل رابط الصورة المباشر.'
+      };
+      await ctx.reply(`${QR_TYPES[type]}\n\n${examples[type]}\n\n/cancel للإلغاء.`);
+    });
+  }
 
   bot.callbackQuery(/^contact:reply:(\d+):(\d+)$/, async ctx => {
     const botId = Number(ctx.match[1]), userId = Number(ctx.match[2]);
@@ -180,6 +255,24 @@ export function createManagedBot(record, db) {
 
   bot.on('message', async ctx => {
     if (!ctx.from) return;
+
+    if (record.template === 'qr' && ctx.chat.type === 'private' && ctx.message.text) {
+      const qkey = `${record.id}:${ctx.from.id}`;
+      const qtype = qrStates.get(qkey);
+      if (qtype) {
+        if (ctx.message.text === '/cancel') {
+          qrStates.delete(qkey);
+          return ctx.reply('↩️ تم الإلغاء.');
+        }
+        try {
+          qrStates.delete(qkey);
+          return await sendQr(ctx, qtype, ctx.message.text);
+        } catch (e) {
+          return ctx.reply(`❌ ${e?.message || 'تعذر إنشاء رمز QR.'}`);
+        }
+      }
+    }
+
     if (ctx.from.id === record.owner_user_id && ctx.chat.type === 'private') {
       const key = `${record.id}:${ctx.from.id}`;
       const state = replyStates.get(key);
