@@ -7,7 +7,18 @@ const qrStates = new Map();
 
 export async function verifyBotToken(token) {
   const b = new Bot(token);
-  return await b.api.getMe();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 15000);
+  try {
+    return await b.api.getMe({ signal: controller.signal });
+  } catch (e) {
+    if (e?.name === 'AbortError' || controller.signal.aborted) {
+      throw new Error('انتهت مهلة الاتصال مع Telegram. حاول مرة أخرى.');
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function decorated(text) {
@@ -317,10 +328,20 @@ export function createManagedBot(record, db) {
 
 export async function startManagedBot(record,db) {
   const bot = createManagedBot(record,db);
-  await bot.api.deleteWebhook({drop_pending_updates:false});
-  db.markBotStarted(record.id);
-  bot.start({onStart:info=>console.log(`Managed @${info.username} started`)});
-  return bot;
+  try {
+    await bot.api.deleteWebhook({drop_pending_updates:false});
+    const me = await bot.api.getMe();
+    bot.start({onStart:info=>console.log(`Managed @${info.username} started`)}).catch(err => {
+      db.setBotStatus(record.id,'error');
+      console.error(`Managed bot #${record.id} polling failed:`, err?.message || err);
+    });
+    db.markBotStarted(record.id);
+    return { bot, me };
+  } catch (e) {
+    runtimes.delete(record.id);
+    db.setBotStatus(record.id,'error');
+    throw e;
+  }
 }
 
 export async function startAllManagedBots(db) {
