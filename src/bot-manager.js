@@ -7,17 +7,16 @@ const qrStates = new Map();
 
 export async function verifyBotToken(token) {
   const b = new Bot(token);
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 15000);
+  const timeout = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('انتهت مهلة الاتصال مع Telegram. حاول مرة أخرى.')), 15000)
+  );
   try {
-    return await b.api.getMe({ signal: controller.signal });
+    // Do not pass { signal } to getMe: grammY treats the argument as the
+    // Telegram payload for this method in this version. The race gives us
+    // a guaranteed UI timeout without breaking grammY's request shape.
+    return await Promise.race([b.api.getMe(), timeout]);
   } catch (e) {
-    if (e?.name === 'AbortError' || controller.signal.aborted) {
-      throw new Error('انتهت مهلة الاتصال مع Telegram. حاول مرة أخرى.');
-    }
     throw e;
-  } finally {
-    clearTimeout(timer);
   }
 }
 
