@@ -137,7 +137,13 @@ export function registerUserHandlers(bot,db) {
         if (existing) return ctx.reply(`⚠️ هذا البوت مرتبط مسبقًا بالمنصة كـ @${existing.username || me.username}.`);
         const id = db.addBot({ownerUserId:ctx.from.id,token,botId:me.id,username:me.username,firstName:me.first_name,template:p.template});
         const record = db.getBot(id);
-        await startManagedBot(record,db);
+        try {
+          await startManagedBot(record,db);
+        } catch (startError) {
+          db.setBotStatus(id,'error');
+          const detail = startError?.description || startError?.message || 'تعذر تشغيل البوت.';
+          return ctx.reply(`❌ تم التحقق من الـToken، لكن تعذر تشغيل البوت.\n\n${detail}\n\nتأكد أن البوت غير مشغّل في مكان آخر ثم حاول مرة أخرى.`);
+        }
         try { await setManagedBotProfile(record,p.name); } catch (e) { console.error(`Profile setup failed for bot #${id}:`,e?.message||e); }
         db.setBotSetting(id,'display_name',p.name);
         pending.delete(ctx.from.id);
